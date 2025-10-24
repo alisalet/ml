@@ -1,0 +1,86 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+
+csv_path = 'C:/Users/User/Downloads/gss.csv'
+df=pd.read_csv(csv_path, low_memory=False)
+#Колонки, с которыми работаем
+features=['AGE WHEN FIRST MARRIED', 'RESPONDENTS SEX', 'RACE OF RESPONDENT', 'RS FAMILY INCOME WHEN 16 YRS OLD', 'MARITAL STATUS']
+df=df[features].copy()
+
+#Очистка текстовых заголовков
+text_headers=['sex', 'race', 'marital', 'agewed', 'age', 'income', 'incom16', 'nan', '']
+clean_df=df.copy()
+
+for col in clean_df.columns:
+    mask=clean_df[col].astype(str).str.strip().str.lower().isin(text_headers)
+    clean_df=clean_df[~mask]
+
+#Генерация искусственных ошибок на всякий случай
+if clean_df.isnull().sum().sum()==0:
+    np.random.seed(42)
+    for col in clean_df.columns:
+        if np.random.rand()<0.3:
+            rand_idx=np.random.choice(clean_df.index, size=5, replace=False)
+            clean_df.loc[rand_idx, col]=np.nan
+
+#Преобразование типов данных
+for col in clean_df.columns:
+    try:
+        clean_df[col]=pd.to_numeric(clean_df[col], errors='ignore')
+    except:
+        pass
+
+df_before=clean_df.copy()
+
+#Заполнение пропусков
+for col in clean_df.columns:
+    if np.issubdtype(clean_df[col].dtype, np.number):
+        clean_df[col]=clean_df[col].fillna(clean_df[col].median())
+    else:
+        clean_df[col]=clean_df[col].fillna(clean_df[col].mode()[0])
+
+#Преобразование категориальных признаков
+categorical_cols=['RESPONDENTS SEX', 'RACE OF RESPONDENT', 'MARITAL STATUS']
+numeric_cols=['AGE WHEN FIRST MARRIED', 'RS FAMILY INCOME WHEN 16 YRS OLD']
+
+preprocessor=ColumnTransformer([
+    ('num', StandardScaler(), numeric_cols),
+    ('cat', OneHotEncoder(drop='first', sparse_output=False), categorical_cols)
+])
+
+encoded_df=pd.DataFrame(
+    preprocessor.fit_transform(clean_df),
+    columns=list(numeric_cols) + list(preprocessor.named_transformers_['cat'].get_feature_names_out(categorical_cols))
+)
+
+#Графики ДО и ПОСЛЕ
+for col in df.columns:
+    plt.figure(figsize=(8, 6))
+
+    #До обработки
+    plt.subplot(2, 1, 1)
+    if np.issubdtype(df_before[col].dtype, np.number):
+        plt.hist(df_before[col].dropna(), bins=20, color='#7cb3fc', edgecolor='#68a6f7k')
+    else:
+        counts=df_before[col].value_counts().sort_index()
+        plt.bar(counts.index, counts.values, color='#7cb3fce', edgecolor='#68a6f7k')
+    plt.title(f'{col} до обработки')
+    plt.ylabel('Количество')
+
+    #После обработки
+    plt.subplot(2, 1, 2)
+    if col in numeric_cols:
+        plt.hist(encoded_df[col], bins=20, color='#a96df7e', edgecolor='#a461fa')
+    else:
+        cat_cols_encoded=[c for c in X_encoded.columns if c.startswith(col.split()[0])]
+        plt.bar(cat_cols_encoded, X_encoded[cat_cols_encoded].sum(), color='#a96df7e', edgecolor='#a461fa')
+    plt.title(f'{col} после обработки')
+    plt.ylabel('Количество')
+
+    plt.tight_layout()
+    plt.show()
+
+print('\nПайплайн успешно завершён!')
