@@ -1,0 +1,92 @@
+import pandas as pd
+import numpy as np
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+from imblearn.over_sampling import SMOTE, ADASYN, RandomOverSampler
+from imblearn.under_sampling import TomekLinks
+import warnings
+
+warnings.filterwarnings('ignore')
+
+#Загрузка обработанных данных из 3 лабораторной
+df=pd.read_csv('C:/Users/User/PycharmProjects/ml/lab1/data/processed_for_lab4.csv')
+X=df.drop('TARGET', axis=1)
+y=df['TARGET']
+
+#Разделение на train и test
+X_train,X_test,y_train,y_test=train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+# Базовая модель
+dt_base=DecisionTreeClassifier(random_state=42, max_depth=5)
+dt_base.fit(X_train, y_train)
+y_pred_base=dt_base.predict(X_test)
+acc_base=accuracy_score(y_test, y_pred_base)
+
+print(f'Базовая модель: {acc_base:.4f}')
+
+#Создание несбалансированных данных
+majority_class=1
+majority_indices=y_train[y_train==majority_class].index
+majority_to_keep=int(len(majority_indices)*0.1)
+majority_keep=np.random.choice(majority_indices, majority_to_keep, replace=False)
+
+minority_indices=y_train[y_train == 0].index
+unbalanced_indices=np.concatenate([majority_keep, minority_indices])
+
+X_train_unb=X_train.loc[unbalanced_indices]
+y_train_unb=y_train.loc[unbalanced_indices]
+
+#Модель на несбалансированных данных
+dt_unb=DecisionTreeClassifier(random_state=42, max_depth=5)
+dt_unb.fit(X_train_unb, y_train_unb)
+y_pred_unb=dt_unb.predict(X_test)
+acc_unb=accuracy_score(y_test, y_pred_unb)
+
+print(f'Несбалансированные данные: {acc_unb:.4f}')
+
+#Методы балансировки
+methods = {
+    'RandomOverSampler': RandomOverSampler(random_state=42),
+    'SMOTE': SMOTE(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'TomekLinks': TomekLinks()
+}
+
+results=[]
+for name, sampler in methods.items():
+    X_res,y_res=sampler.fit_resample(X_train_unb, y_train_unb)
+
+    dt=DecisionTreeClassifier(random_state=42, max_depth=5)
+    dt.fit(X_res, y_res)
+    y_pred=dt.predict(X_test)
+    acc=accuracy_score(y_test, y_pred)
+
+    results.append((name, acc))
+    print(f'{name}: {acc:.4f}')
+
+print('Итоги:')
+all_results=[('Базовая', acc_base), ('Несбалансированные', acc_unb)]+results
+all_results_sorted=sorted(all_results, key=lambda x: x[1], reverse=True)
+
+for method, acc in all_results_sorted:
+    print(f'{method:<20} {acc:.4f}')
+
+best_method,best_acc=all_results_sorted[0]
+print(f'\nЛучший метод: {best_method} ({best_acc:.4f})')
+
+if best_method=='Базовая':
+    print('\nОтчет для базовой модели:')
+    print(classification_report(y_test, y_pred_base))
+elif best_method=='Несбалансированные':
+    print('\nОтчет для несбалансированной модели:')
+    print(classification_report(y_test, y_pred_unb))
+else:
+    sampler=methods[best_method]
+    X_best,y_best=sampler.fit_resample(X_train_unb, y_train_unb)
+    dt_best=DecisionTreeClassifier(random_state=42, max_depth=5)
+    dt_best.fit(X_best, y_best)
+    y_pred_best=dt_best.predict(X_test)
+
+    print(f'\nОтчет для {best_method}:')
+    print(classification_report(y_test, y_pred_best))
