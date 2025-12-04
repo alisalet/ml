@@ -1,0 +1,117 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+from string import punctuation
+from collections import Counter
+from sklearn.feature_extraction.text import CountVectorizer
+import pymorphy3
+from transformers import AutoTokenizer, AutoModel
+import torch
+import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
+
+#Парсинг 50 новостей
+base_url='https://ria.ru'
+headers={'User-Agent':'Mozilla/5.0'}
+response=requests.get(base_url,headers=headers)
+soup=BeautifulSoup(response.text,'html.parser')
+news=soup.find_all('a',class_='cell-list__item-link color-font-hover-only',limit=50)
+data=[]
+for new in news:
+    title=new.get_text(' ',strip=True)
+    title=re.sub(r'\s+',' ',title)
+    link=new.get('href')
+    if link:
+        if link.startswith('/'):
+            link=base_url+link
+        try:
+            article_response=requests.get(link,headers=headers,timeout=5)
+            article_soup=BeautifulSoup(article_response.text,'html.parser')
+            text_parts=article_soup.find_all('div',class_='article__text')
+            text=' '.join([p.get_text(' ',strip=True) for p in text_parts])
+            if text and len(text)>100:
+                data.append({'title':title,'text':text})
+        except:
+            continue
+df=pd.DataFrame(data)
+
+#Предобработка текстов
+stopwords=['что','риа','новости','дек','также','для','его','как','этом','после','при','так','они','это чтобы','под','года','москва','сша','всу','мид','евро','украина','путин','россия','заявил','сказал','сообщил','отметил','добавил']
+cleaned_texts=[]
+for text in df['text']:
+    text=str(text).lower()
+    for p in punctuation+'«»—…':
+        text=text.replace(p,' ')
+    text=re.sub(r'\d+',' ',text)
+    text=re.sub(r'\s+',' ',text)
+    words=text.split()
+    filtered_words=[word for word in words if word not in stopwords and len(word)>2]
+    cleaned_texts.append(' '.join(filtered_words))
+df['text_clean']=cleaned_texts
+
+#Частотный словарь
+all_words=[]
+for text in df['text_clean']:
+    all_words.extend(text.split())
+freq=Counter(all_words)
+print(f'Топ-10 слов: {list(freq.most_common(10))}')
+print(f'Всего уникальных слов: {len(freq)}')
+
+#Bag of words
+vectorizer=CountVectorizer(max_features=500)
+bow_matrix=vectorizer.fit_transform(df['text_clean'])
+features=vectorizer.get_feature_names_out()
+
+#Лемматизация
+morph=pymorphy3.MorphAnalyzer()
+lemmatized_texts=[]
+print('Пример лемматизации слов:')
+sample_words=df['text_clean'].iloc[0].split()[:15]
+for word in sample_words:
+    parsed=morph.parse(word)[0]
+    print(f'{word:15}-> {parsed.normal_form}')
+for text in df['text_clean']:
+    words=text.split()
+    lemma_words=[]
+    for word in words:
+        parsed=morph.parse(word)[0]
+        lemma_words.append(parsed.normal_form)
+    lemmatized_texts.append(' '.join(lemma_words))
+df['text_lemma']=lemmatized_texts
+print('Пример лемматизированного текста:')
+print(f'{df['text_lemma'].iloc[0][:150]}...')
+
+try:
+    tokenizer=AutoTokenizer.from_pretrained('cointegrated/rubert-tiny2')
+    model=AutoModel.from_pretrained('cointegrated/rubert-tiny2')
+
+    #Беру первые 5 новостей для демонстрации
+    demo_texts=df['text_clean'].head(5).tolist()
+    bert_embeddings=[]
+
+    for i, text in enumerate(demo_texts):
+        #Токенизация
+        inputs=tokenizer(text, max_length=512, truncation=True, return_tensors='pt', padding=True)
+        # Получение эмбеддингов
+        with torch.no_grad():
+            outputs=model(**inputs)
+        cls_embedding=outputs.last_hidden_state[:, 0, :].numpy()
+        bert_embeddings.append(cls_embedding[0])
+
+    bert_array=np.array(bert_embeddings)
+    np.save('bert_embeddings.npy', bert_array)
+    print(f'BERT эмбеддинги сохранены')
+    print(f'Размер: {bert_array.shape} (5 текстов х{bert_array.shape[1]} размерность)')
+    print('Пример первого вектора (первые 10 значений):')
+    print(bert_array[0][:10])
+
+except Exception as e:
+    print(f'Ошибка при работе с BERT: {e}')
+
+df.to_csv('news.csv',index=False)
+pd.DataFrame(bow_matrix.toarray(),columns=features).to_csv('bow.csv',index=False)
+with open('freq.txt','w',encoding='utf-8')as f:
+    for word,count in freq.most_common():
+        f.write(f'{word}\t{count}\n')
